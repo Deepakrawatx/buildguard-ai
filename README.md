@@ -1,72 +1,17 @@
-# BuildGuard AI Pilot v2
+# BuildGuard AI — Public Demo Mode
 
-This version adds a real Supabase-backed pilot workspace.
+This version removes login completely for easy client demos.
 
-## Included
+- Dashboard opens directly
+- New projects save in browser localStorage
+- Refresh keeps projects on the same browser
+- Reset Demo restores the sample portfolio
+- Upload Document stores only file metadata locally
+- Supabase is not used, so private database/storage is not exposed
 
-- Passwordless email login
-- Persistent projects in Supabase Postgres
-- Row Level Security
-- Project creation
-- Project portfolio dashboard
-- Schedule and budget exception detection
-- Private project document storage
-- BOQ / schedule / budget / quote / PO / invoice document categories
-- Per-user data isolation
-- AI-style project analyst based on saved structured project data
-- Demo portfolio shown until first real project is created
+## Deploy
+Replace the existing GitHub repository files with these files. Vercel will redeploy automatically.
 
-## Setup
+No environment variables are required for this demo build.
 
-### 1. Supabase SQL
-
-Open Supabase > SQL Editor > New query.
-
-Paste the complete contents of:
-
-`supabase/migration.sql`
-
-Click Run once.
-
-### 2. Vercel environment variables
-
-In Vercel project:
-
-Settings > Environment Variables
-
-Add:
-
-NEXT_PUBLIC_SUPABASE_URL
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-
-Use the values from your Supabase Connect screen.
-
-Apply them to Production, Preview and Development.
-
-### 3. Deploy
-
-Replace the existing GitHub repository files with this project's files.
-
-Vercel will redeploy automatically.
-
-## Authentication setting
-
-In Supabase:
-Authentication > URL Configuration
-
-Set Site URL to:
-https://buildguard-ai.vercel.app
-
-Add Redirect URL:
-https://buildguard-ai.vercel.app/**
-
-This ensures magic-login emails return users to the deployed app.
-
-## Important
-
-Do NOT expose:
-- service_role key
-- database password
-- secret API keys
-
-Only the publishable Supabase key belongs in `NEXT_PUBLIC_...`.
+For paying clients, use the authenticated Supabase version so each company's data stays private.
