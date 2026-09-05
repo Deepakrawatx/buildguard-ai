@@ -1,32 +1,72 @@
-# BuildGuard AI — Client Demo
+# BuildGuard AI Pilot v2
 
-This is the client-facing product demo.
+This version adds a real Supabase-backed pilot workspace.
 
-## Run locally
+## Included
 
-npm install
-npm run dev
+- Passwordless email login
+- Persistent projects in Supabase Postgres
+- Row Level Security
+- Project creation
+- Project portfolio dashboard
+- Schedule and budget exception detection
+- Private project document storage
+- BOQ / schedule / budget / quote / PO / invoice document categories
+- Per-user data isolation
+- AI-style project analyst based on saved structured project data
+- Demo portfolio shown until first real project is created
 
-Open http://localhost:3000
+## Setup
 
-## Deploy
+### 1. Supabase SQL
 
-### Vercel
-1. Upload this project to GitHub.
-2. Import the GitHub repo into Vercel.
-3. Vercel will detect Next.js automatically.
-4. Click Deploy.
+Open Supabase > SQL Editor > New query.
 
-### Netlify
-Use the Next.js deployment flow and deploy this repository.
+Paste the complete contents of:
 
-## Demo flow
-1. Open the landing page.
-2. Click "View live product demo".
-3. Show the critical steel risk.
-4. Show portfolio progress.
-5. Show vendor decision scoring.
-6. Use the AI analyst buttons.
+`supabase/migration.sql`
 
-## Positioning
-BuildGuard tells real-estate developers where a project may lose time or money before the problem becomes expensive.
+Click Run once.
+
+### 2. Vercel environment variables
+
+In Vercel project:
+
+Settings > Environment Variables
+
+Add:
+
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+
+Use the values from your Supabase Connect screen.
+
+Apply them to Production, Preview and Development.
+
+### 3. Deploy
+
+Replace the existing GitHub repository files with this project's files.
+
+Vercel will redeploy automatically.
+
+## Authentication setting
+
+In Supabase:
+Authentication > URL Configuration
+
+Set Site URL to:
+https://buildguard-ai.vercel.app
+
+Add Redirect URL:
+https://buildguard-ai.vercel.app/**
+
+This ensures magic-login emails return users to the deployed app.
+
+## Important
+
+Do NOT expose:
+- service_role key
+- database password
+- secret API keys
+
+Only the publishable Supabase key belongs in `NEXT_PUBLIC_...`.

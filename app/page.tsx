@@ -1,197 +1,292 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { calculateHealth, projectInsights, Project } from "@/lib/risk";
 import {
-  ArrowRight, Building2, TriangleAlert, CircleDollarSign, Clock3,
-  CheckCircle2, Sparkles, Upload, ShieldCheck, Layers3, BarChart3
+  ArrowRight, Building2, CheckCircle2, LogOut, Plus, Sparkles,
+  TriangleAlert, UploadCloud, WalletCards, X
 } from "lucide-react";
 
-const projects = [
-  {name:"Horizon Heights", city:"Gurugram", value:"₹120 Cr", actual:37, planned:44, health:"Critical", issue:"Steel shortfall"},
-  {name:"Greenview Towers", city:"Noida", value:"₹88 Cr", actual:61, planned:61, health:"Healthy", issue:"No critical issue"},
-  {name:"Metro Square", city:"Delhi", value:"₹54 Cr", actual:29, planned:35, health:"Watch", issue:"Electrical RFQ pending"},
-  {name:"Lakeview Villas", city:"Faridabad", value:"₹24 Cr", actual:82, planned:80, health:"Healthy", issue:"Finishing package review"},
+const demoProjects: Project[] = [
+  {id:"demo-horizon",name:"Horizon Heights",city:"Gurugram",project_type:"Residential",value_cr:120,progress:37,planned_progress:44,budget_planned_l:500,budget_actual_l:541},
+  {id:"demo-green",name:"Greenview Towers",city:"Noida",project_type:"Residential",value_cr:88,progress:61,planned_progress:61,budget_planned_l:420,budget_actual_l:409},
+  {id:"demo-metro",name:"Metro Square",city:"Delhi",project_type:"Commercial",value_cr:54,progress:29,planned_progress:35,budget_planned_l:310,budget_actual_l:318},
+  {id:"demo-lake",name:"Lakeview Villas",city:"Faridabad",project_type:"Villas",value_cr:24,progress:82,planned_progress:80,budget_planned_l:160,budget_actual_l:151}
 ];
 
-const vendors = [
-  {name:"BuildRight Metals", rate:"₹59,800/MT", delivery:"9 days", payment:"30 days credit", score:94, recommended:true},
-  {name:"Shree Steel", rate:"₹61,500/MT", delivery:"6 days", payment:"30 days credit", score:86},
-  {name:"Metro Metals", rate:"₹57,900/MT", delivery:"16 days", payment:"50% advance", score:68},
-];
+export default function Home() {
+  const supabase = useMemo(() => createClient(), []);
+  const [session, setSession] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [email, setEmail] = useState("");
+  const [authMsg, setAuthMsg] = useState("");
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [showNew, setShowNew] = useState(false);
+  const [showUpload, setShowUpload] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [aiQ, setAiQ] = useState("");
+  const [aiAnswer, setAiAnswer] = useState("Ask what needs your attention today.");
 
-export default function Home(){
-  const [view,setView] = useState<"landing"|"dashboard">("landing");
-  const [answer,setAnswer] = useState("Ask what needs your attention today.");
-  const [q,setQ] = useState("");
+  useEffect(() => {
+    supabase.auth.getSession().then(({data}) => {
+      setSession(data.session);
+      setAuthLoading(false);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, [supabase]);
 
-  function ask(){
-    const x=q.toLowerCase();
-    if(!x.trim()) return;
-    if(x.includes("delay") || x.includes("risk")){
-      setAnswer("Horizon Heights has the highest current risk. 40 MT of steel is still uncovered for upcoming structural work, and the material window is tightening.");
-    } else if(x.includes("vendor") || x.includes("steel")){
-      setAnswer("BuildRight Metals is the strongest overall choice. It is not the cheapest, but its delivery window and payment terms create lower schedule risk.");
-    } else if(x.includes("budget") || x.includes("cost")){
-      setAnswer("The electrical package is currently projected ₹4.1L above plan. This is the clearest budget exception requiring review.");
-    } else {
-      setAnswer("I found 6 issues across 4 projects. The most important are steel coverage, electrical RFQ delay, and one package running above budget.");
+  useEffect(() => {
+    if (!session) {
+      setProjects([]);
+      return;
     }
-    setQ("");
+    loadProjects();
+  }, [session]);
+
+  async function loadProjects() {
+    const { data, error } = await supabase.from("projects").select("*").order("created_at", { ascending: false });
+    if (!error && data) setProjects(data as Project[]);
   }
 
-  if(view==="landing"){
-    return <div className="site">
-      <nav className="nav">
-        <div className="logo"><div>BG</div><span>BuildGuard AI</span></div>
-        <div className="navLinks"><span>Product</span><span>How it works</span><span>For developers</span></div>
-        <button onClick={()=>setView("dashboard")} className="navBtn">Open live demo <ArrowRight size={16}/></button>
-      </nav>
-
-      <main>
-        <section className="hero">
-          <div className="heroCopy">
-            <div className="kicker"><Sparkles size={15}/> AI PROJECT CONTROL ROOM</div>
-            <h1>Know where your project may lose time or money before it becomes expensive.</h1>
-            <p>BuildGuard connects BOQ, schedules, budgets, purchase orders and vendor quotes to surface procurement, schedule and cost risks for real-estate developers.</p>
-            <div className="heroActions">
-              <button className="primary" onClick={()=>setView("dashboard")}>View live product demo <ArrowRight size={18}/></button>
-              <button className="ghost">See how it works</button>
-            </div>
-            <div className="trustRow">
-              <span><ShieldCheck size={16}/> Human-approved actions</span>
-              <span><Layers3 size={16}/> Works with existing Excel/PDF workflow</span>
-              <span><BarChart3 size={16}/> Portfolio-level visibility</span>
-            </div>
-          </div>
-
-          <div className="heroPanel">
-            <div className="windowTop"><span></span><span></span><span></span><b>Horizon Developers · Executive View</b></div>
-            <div className="miniMetrics">
-              <div><span>Active projects</span><strong>4</strong></div>
-              <div><span>Portfolio value</span><strong>₹286 Cr</strong></div>
-              <div><span>Critical issues</span><strong className="redText">2</strong></div>
-            </div>
-            <div className="alertCard">
-              <div className="alertBadge"><TriangleAlert size={15}/> Critical risk</div>
-              <h3>40 MT steel shortfall may affect Tower B structural work</h3>
-              <p>Required 110 MT · Inventory 32 MT · Ordered 38 MT</p>
-              <div className="alertMeta"><span>Required by 24 Sep</span><span>Potential impact 4–7 days</span></div>
-            </div>
-            <div className="miniTable">
-              <div className="row head"><span>Project</span><span>Actual</span><span>Plan</span><span>Status</span></div>
-              {projects.slice(0,3).map(p=><div className="row" key={p.name}><span>{p.name}</span><span>{p.actual}%</span><span>{p.planned}%</span><span className={p.health==="Healthy"?"ok":"warn"}>{p.health}</span></div>)}
-            </div>
-          </div>
-        </section>
-
-        <section className="problem">
-          <div className="sectionTag">ONE CONTROL ROOM</div>
-          <h2>Stop checking 20 files to understand one project.</h2>
-          <p className="sectionIntro">BuildGuard turns fragmented construction data into a simple answer: what needs attention now?</p>
-          <div className="flow">
-            <div className="flowCard"><Upload/><b>Project data</b><span>BOQ, schedules, budgets, vendor quotes, POs</span></div>
-            <div className="arrow">→</div>
-            <div className="flowCard accent"><Sparkles/><b>BuildGuard AI</b><span>Connects data, checks gaps and ranks risks</span></div>
-            <div className="arrow">→</div>
-            <div className="flowCard"><Building2/><b>Owner dashboard</b><span>What is late, expensive, missing or blocked</span></div>
-          </div>
-        </section>
-
-        <section className="features">
-          <div className="feature"><TriangleAlert/><h3>Procurement risk</h3><p>Know which material shortfall could delay an upcoming work package.</p></div>
-          <div className="feature"><CircleDollarSign/><h3>Vendor intelligence</h3><p>Compare price, lead time and payment terms instead of choosing only the cheapest quote.</p></div>
-          <div className="feature"><Clock3/><h3>Schedule control</h3><p>See actual progress vs planned progress and surface projects slipping behind.</p></div>
-          <div className="feature"><CheckCircle2/><h3>Budget exceptions</h3><p>Highlight packages running above plan so management can act early.</p></div>
-        </section>
-
-        <section className="cta">
-          <div><span>BUILT FOR REAL-ESTATE DEVELOPERS</span><h2>See what BuildGuard would show an owner every morning.</h2></div>
-          <button onClick={()=>setView("dashboard")}>Open demo dashboard <ArrowRight size={18}/></button>
-        </section>
-      </main>
-    </div>
+  async function sendMagicLink() {
+    setAuthMsg("Sending...");
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: window.location.origin }
+    });
+    setAuthMsg(error ? error.message : "Check your email for the secure login link.");
   }
 
-  return <div className="dashShell">
-    <aside className="side">
-      <div className="logo dark"><div>BG</div><span>BuildGuard AI</span></div>
-      <div className="sideNav">
-        <b>Overview</b><span>Projects</span><span>Procurement</span><span>Budget</span><span>Risk center</span><span>Documents</span><span>AI analyst</span>
+  async function signOut() {
+    await supabase.auth.signOut();
+  }
+
+  const visibleProjects = projects.length ? projects : demoProjects;
+  const totalValue = visibleProjects.reduce((sum,p)=>sum+Number(p.value_cr||0),0);
+  const exceptionCount = visibleProjects.filter(p=>calculateHealth(p).label!=="Healthy").length;
+
+  function askAI(){
+    const p = selectedProject || visibleProjects[0];
+    const q = aiQ.toLowerCase();
+    if (!p) return;
+
+    if (q.includes("budget") || q.includes("cost")) {
+      const gap = Number(p.budget_actual_l)-Number(p.budget_planned_l);
+      setAiAnswer(gap>0 ? `${p.name} is currently ₹${gap.toFixed(1)}L above the control budget.` : `${p.name} is not above its current control budget.`);
+    } else if (q.includes("delay") || q.includes("risk") || q.includes("late")) {
+      setAiAnswer(projectInsights(p).join(" "));
+    } else {
+      setAiAnswer(`${projectInsights(p).join(" ")} Upload procurement and schedule documents to add deeper material and vendor risk analysis.`);
+    }
+    setAiQ("");
+  }
+
+  if (authLoading) return <div className="centerPage"><div className="loader">BuildGuard AI</div></div>;
+
+  if (!session) {
+    return <div className="loginPage">
+      <div className="loginLeft">
+        <div className="brand"><div>BG</div><span>BuildGuard AI</span></div>
+        <div className="loginCopy">
+          <span className="eyebrow">AI PROJECT CONTROL ROOM</span>
+          <h1>Your construction portfolio, explained in one screen.</h1>
+          <p>Connect project data, surface schedule and cost exceptions, and give management a clear daily view of what needs attention.</p>
+          <div className="loginBullets">
+            <span><CheckCircle2/> Saved project workspaces</span>
+            <span><CheckCircle2/> Project document storage</span>
+            <span><CheckCircle2/> Schedule and budget risk checks</span>
+          </div>
+        </div>
       </div>
-      <button onClick={()=>setView("landing")} className="backBtn">← Back to website</button>
+      <div className="loginRight">
+        <div className="loginCard">
+          <span className="eyebrow">SECURE WORKSPACE</span>
+          <h2>Sign in to BuildGuard</h2>
+          <p>Enter your email. We will send you a secure login link.</p>
+          <label>Email address<input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@company.com" onKeyDown={e=>e.key==="Enter"&&sendMagicLink()}/></label>
+          <button onClick={sendMagicLink} disabled={!email}>Send login link <ArrowRight size={17}/></button>
+          {authMsg && <div className="authMsg">{authMsg}</div>}
+          <small>No password required for the pilot.</small>
+        </div>
+      </div>
+    </div>;
+  }
+
+  return <div className="shell">
+    <aside className="sidebar">
+      <div className="brand dark"><div>BG</div><span>BuildGuard AI</span></div>
+      <nav><b>Overview</b><span>Projects</span><span>Procurement</span><span>Budget</span><span>Risk center</span><span>Documents</span><span>AI analyst</span></nav>
+      <div className="sideBottom">
+        <small>{session.user.email}</small>
+        <button onClick={signOut}><LogOut size={15}/> Sign out</button>
+      </div>
     </aside>
 
-    <main className="dashboard">
-      <header className="dashTop">
-        <div><span className="sectionTag">EXECUTIVE CONTROL ROOM</span><h1>Good morning, Mr. Shah</h1><p>Here is what needs your attention across all active projects.</p></div>
-        <button className="primary">+ New project</button>
+    <main className="main">
+      <header className="top">
+        <div>
+          <span className="eyebrow">EXECUTIVE CONTROL ROOM</span>
+          <h1>Portfolio overview</h1>
+          <p>See which projects need management attention.</p>
+        </div>
+        <div className="topActions">
+          <button className="secondary" onClick={()=>setShowUpload(true)}><UploadCloud size={16}/> Upload document</button>
+          <button className="primary" onClick={()=>setShowNew(true)}><Plus size={16}/> New project</button>
+        </div>
       </header>
 
-      <div className="cards4">
-        <div className="metric"><span>Active projects</span><strong>4</strong><small>Across 4 NCR locations</small></div>
-        <div className="metric"><span>Total project value</span><strong>₹286 Cr</strong><small>Current portfolio</small></div>
-        <div className="metric"><span>Issues needing attention</span><strong>6</strong><small>2 are critical</small></div>
-        <div className="metric"><span>Potential savings found</span><strong>₹6.8L</strong><small>Current procurement cycle</small></div>
-      </div>
+      {!projects.length && <div className="demoNotice">
+        <Sparkles size={17}/>
+        <div><b>Demo data is shown until you create your first project.</b><span>Your real projects will automatically replace this sample portfolio.</span></div>
+      </div>}
 
-      <div className="dashGrid">
+      <section className="metrics">
+        <div><span>Active projects</span><strong>{visibleProjects.length}</strong><small>Current workspace</small></div>
+        <div><span>Total project value</span><strong>₹{totalValue} Cr</strong><small>Across active projects</small></div>
+        <div><span>Projects needing attention</span><strong>{exceptionCount}</strong><small>Schedule or budget exception</small></div>
+        <div><span>Documents</span><strong>Live</strong><small>Secure project storage enabled</small></div>
+      </section>
+
+      <section className="grid">
         <div>
-          <div className="bigRisk">
-            <div className="riskHeader"><span className="alertBadge"><TriangleAlert size={14}/> Critical procurement risk</span><span>Horizon Heights</span></div>
-            <h2>40 MT steel shortfall may delay Tower B structural work</h2>
-            <p>110 MT is required. Current inventory covers 32 MT and existing POs cover 38 MT. The remaining 40 MT is not yet covered.</p>
-            <div className="riskStats"><div><span>Required by</span><strong>24 Sep</strong></div><div><span>Lead time</span><strong>6–16 days</strong></div><div><span>Risk level</span><strong>High</strong></div></div>
-          </div>
-
           <div className="panel">
-            <div className="panelTitle"><div><h3>Project overview</h3><p>Actual progress against current plan</p></div><span className="pill">Updated today</span></div>
-            <div className="projectTable">
-              <div className="trow thead"><span>Project</span><span>Progress</span><span>Schedule</span><span>Value</span><span>Health</span></div>
-              {projects.map(p=><div className="trow" key={p.name}>
-                <span><b>{p.name}</b><small>{p.city}</small></span>
-                <span><div className="barLabel"><small>{p.actual}%</small><small>Plan {p.planned}%</small></div><div className="bar"><i style={{width:`${p.actual}%`}}></i></div></span>
-                <span className={p.actual<p.planned?"bad":"good"}>{p.actual<p.planned?`${p.planned-p.actual}% behind`:"On track"}</span>
-                <span>{p.value}</span>
-                <span><em className={p.health==="Healthy"?"health goodH":p.health==="Critical"?"health badH":"health watchH"}>{p.health}</em></span>
-              </div>)}
+            <div className="panelHead">
+              <div><h2>Projects</h2><p>Actual progress against current plan</p></div>
+            </div>
+            <div className="table">
+              <div className="tr th"><span>Project</span><span>Progress</span><span>Schedule</span><span>Value</span><span>Health</span></div>
+              {visibleProjects.map(p=>{
+                const h=calculateHealth(p);
+                const gap=Number(p.planned_progress)-Number(p.progress);
+                return <button className="tr projectRow" key={p.id} onClick={()=>setSelectedProject(p)}>
+                  <span><b>{p.name}</b><small>{p.city || "—"}</small></span>
+                  <span><div className="barLabel"><small>{p.progress}%</small><small>Plan {p.planned_progress}%</small></div><div className="bar"><i style={{width:`${Math.min(100,p.progress)}%`}}/></div></span>
+                  <span className={gap>0?"danger":"good"}>{gap>0?`${gap}% behind`:"On track"}</span>
+                  <span>₹{p.value_cr} Cr</span>
+                  <span><em className={`pill ${h.tone}`}>{h.label}</em></span>
+                </button>
+              })}
             </div>
           </div>
 
-          <div className="panel">
-            <div className="panelTitle"><div><h3>Steel vendor decision</h3><p>Price + delivery + payment terms</p></div><span className="health goodH">Recommendation ready</span></div>
-            <div className="vendorTable">
-              <div className="vrow vhead"><span>Vendor</span><span>Rate</span><span>Delivery</span><span>Payment</span><span>AI score</span></div>
-              {vendors.map(v=><div className={`vrow ${v.recommended?"rec":""}`} key={v.name}><span><b>{v.name}</b>{v.recommended&&<small>Recommended</small>}</span><span>{v.rate}</span><span>{v.delivery}</span><span>{v.payment}</span><span><b>{v.score}/100</b></span></div>)}
+          <div className="panel riskPanel">
+            <div className="panelHead"><div><h2>Management exceptions</h2><p>Generated from current project data</p></div></div>
+            <div className="riskList">
+              {visibleProjects.flatMap(p=>projectInsights(p).map((i,idx)=>({p,i,idx}))).slice(0,6).map(({p,i,idx})=>{
+                const h=calculateHealth(p);
+                return <div className="riskItem" key={`${p.id}-${idx}`}>
+                  <div className={`riskIcon ${h.tone}`}>{h.label==="Healthy"?<CheckCircle2/>:<TriangleAlert/>}</div>
+                  <div><b>{p.name}</b><span>{i}</span></div>
+                </div>
+              })}
             </div>
           </div>
         </div>
 
-        <div>
-          <div className="aiPanel">
+        <aside>
+          <div className="aiCard">
             <div className="aiTitle"><Sparkles size={18}/><h3>AI Project Analyst</h3></div>
-            <p>{answer}</p>
-            <div className="chips"><button onClick={()=>setQ("What is the biggest delay risk?")}>Biggest delay risk?</button><button onClick={()=>setQ("Which steel vendor is best?")}>Best steel vendor?</button><button onClick={()=>setQ("Where are we over budget?")}>Budget issue?</button></div>
-            <div className="ask"><input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&ask()} placeholder="Ask about your projects..."/><button onClick={ask}>↗</button></div>
-          </div>
-
-          <div className="panel budget">
-            <span className="health watchH">Budget alert</span>
-            <h3>Electrical package is 8.2% above plan</h3>
-            <p>The current control budget is ₹50.0L against ₹54.1L projected.</p>
-            <div className="budgetStats"><div><span>Variance</span><b>+₹4.1L</b></div><div><span>Status</span><b>Review</b></div></div>
+            <p>{aiAnswer}</p>
+            <div className="chips">
+              <button onClick={()=>setAiQ("What is the biggest delay risk?")}>Delay risk?</button>
+              <button onClick={()=>setAiQ("Where are we over budget?")}>Budget issue?</button>
+            </div>
+            <div className="ask"><input value={aiQ} onChange={e=>setAiQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&askAI()} placeholder="Ask about a project..."/><button onClick={askAI}>↗</button></div>
           </div>
 
           <div className="panel">
-            <div className="panelTitle"><div><h3>Today's priorities</h3><p>Ranked by potential impact</p></div></div>
-            <div className="priorities">
-              <div><i>1</i><span><b>Steel purchase decision</b><small>40 MT still uncovered before upcoming work.</small></span></div>
-              <div><i>2</i><span><b>Electrical RFQ pending</b><small>Three quotations are ready for review.</small></span></div>
-              <div><i>3</i><span><b>Budget variance</b><small>Electrical package is ₹4.1L above plan.</small></span></div>
-              <div><i>4</i><span><b>Vendor approval</b><small>BuildRight Metals currently ranks highest.</small></span></div>
-            </div>
+            <h3>Selected project</h3>
+            {selectedProject ? <div className="selected">
+              <div className="selectedIcon"><Building2/></div>
+              <h2>{selectedProject.name}</h2>
+              <p>{selectedProject.city} · {selectedProject.project_type}</p>
+              <div className="selectedStats">
+                <div><span>Actual</span><b>{selectedProject.progress}%</b></div>
+                <div><span>Planned</span><b>{selectedProject.planned_progress}%</b></div>
+                <div><span>Value</span><b>₹{selectedProject.value_cr} Cr</b></div>
+              </div>
+            </div> : <p className="muted">Select a project from the table to inspect it.</p>}
           </div>
-        </div>
-      </div>
+        </aside>
+      </section>
     </main>
-  </div>
+
+    {showNew && <NewProjectModal supabase={supabase} onClose={()=>setShowNew(false)} onSaved={()=>{setShowNew(false);loadProjects();}}/>}
+    {showUpload && <UploadModal supabase={supabase} projects={projects} onClose={()=>setShowUpload(false)}/>}
+  </div>;
+}
+
+function NewProjectModal({supabase,onClose,onSaved}:{supabase:any,onClose:()=>void,onSaved:()=>void}){
+  const [f,setF]=useState({name:"",city:"",project_type:"Residential",value_cr:"",progress:"0",planned_progress:"0",budget_planned_l:"0",budget_actual_l:"0"});
+  const [saving,setSaving]=useState(false);
+  const [error,setError]=useState("");
+
+  async function save(){
+    setSaving(true); setError("");
+    const {data:{user}}=await supabase.auth.getUser();
+    const {error}=await supabase.from("projects").insert({
+      user_id:user.id,
+      name:f.name,
+      city:f.city,
+      project_type:f.project_type,
+      value_cr:Number(f.value_cr||0),
+      progress:Number(f.progress||0),
+      planned_progress:Number(f.planned_progress||0),
+      budget_planned_l:Number(f.budget_planned_l||0),
+      budget_actual_l:Number(f.budget_actual_l||0)
+    });
+    setSaving(false);
+    if(error) setError(error.message); else onSaved();
+  }
+
+  return <div className="modalBg"><div className="modal">
+    <div className="modalTop"><div><span className="eyebrow">PROJECT WORKSPACE</span><h2>Create project</h2></div><button onClick={onClose}><X/></button></div>
+    <div className="formGrid">
+      <label className="full">Project name<input value={f.name} onChange={e=>setF({...f,name:e.target.value})}/></label>
+      <label>City<input value={f.city} onChange={e=>setF({...f,city:e.target.value})}/></label>
+      <label>Type<select value={f.project_type} onChange={e=>setF({...f,project_type:e.target.value})}><option>Residential</option><option>Commercial</option><option>Mixed-use</option><option>Villas</option></select></label>
+      <label>Project value (₹ Cr)<input type="number" value={f.value_cr} onChange={e=>setF({...f,value_cr:e.target.value})}/></label>
+      <label>Actual progress %<input type="number" value={f.progress} onChange={e=>setF({...f,progress:e.target.value})}/></label>
+      <label>Planned progress %<input type="number" value={f.planned_progress} onChange={e=>setF({...f,planned_progress:e.target.value})}/></label>
+      <label>Budget planned (₹ L)<input type="number" value={f.budget_planned_l} onChange={e=>setF({...f,budget_planned_l:e.target.value})}/></label>
+      <label>Budget actual (₹ L)<input type="number" value={f.budget_actual_l} onChange={e=>setF({...f,budget_actual_l:e.target.value})}/></label>
+    </div>
+    {error&&<div className="error">{error}</div>}
+    <button className="saveBtn" onClick={save} disabled={saving||!f.name}>{saving?"Creating...":"Create project"}</button>
+  </div></div>
+}
+
+function UploadModal({supabase,projects,onClose}:{supabase:any,projects:Project[],onClose:()=>void}){
+  const [projectId,setProjectId]=useState(projects[0]?.id||"");
+  const [file,setFile]=useState<File|null>(null);
+  const [category,setCategory]=useState("BOQ");
+  const [status,setStatus]=useState("");
+
+  async function upload(){
+    if(!file||!projectId) return;
+    setStatus("Uploading...");
+    const {data:{user}}=await supabase.auth.getUser();
+    const path=`${user.id}/${projectId}/${Date.now()}-${file.name}`;
+    const {error:storageError}=await supabase.storage.from("project-documents").upload(path,file,{upsert:false});
+    if(storageError){setStatus(storageError.message);return;}
+    const {error}=await supabase.from("project_documents").insert({
+      user_id:user.id,project_id:projectId,file_name:file.name,file_path:path,category
+    });
+    setStatus(error?error.message:"Uploaded successfully.");
+  }
+
+  return <div className="modalBg"><div className="modal uploadModal">
+    <div className="modalTop"><div><span className="eyebrow">PROJECT DOCUMENTS</span><h2>Upload document</h2></div><button onClick={onClose}><X/></button></div>
+    {!projects.length ? <div className="emptyBox">Create your first real project before uploading documents.</div> : <>
+      <label>Project<select value={projectId} onChange={e=>setProjectId(e.target.value)}>{projects.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></label>
+      <label>Document type<select value={category} onChange={e=>setCategory(e.target.value)}><option>BOQ</option><option>Schedule</option><option>Budget</option><option>Vendor Quote</option><option>Purchase Order</option><option>Invoice</option><option>Progress Report</option><option>Other</option></select></label>
+      <label className="fileDrop"><UploadCloud/><b>{file?file.name:"Choose Excel, PDF, image or document"}</b><input type="file" onChange={e=>setFile(e.target.files?.[0]||null)}/></label>
+      {status&&<div className="authMsg">{status}</div>}
+      <button className="saveBtn" disabled={!file||!projectId} onClick={upload}>Upload to project</button>
+    </>}
+  </div></div>
 }
