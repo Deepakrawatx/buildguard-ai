@@ -1,31 +1,271 @@
 "use client";
-import {useEffect,useMemo,useState} from "react";
-import {Building2,TriangleAlert,Sparkles,Plus,UploadCloud,RotateCcw,CheckCircle2} from "lucide-react";
 
-type Project={id:string;name:string;city:string;type:string;valueCr:number;progress:number;planned:number;budgetPlan:number;budgetActual:number};
-const starter:Project[]=[
-{id:"horizon",name:"Horizon Heights",city:"Gurugram",type:"Residential",valueCr:120,progress:37,planned:44,budgetPlan:500,budgetActual:541},
-{id:"greenview",name:"Greenview Towers",city:"Noida",type:"Residential",valueCr:88,progress:61,planned:61,budgetPlan:420,budgetActual:409},
-{id:"metro",name:"Metro Square",city:"Delhi",type:"Commercial",valueCr:54,progress:29,planned:35,budgetPlan:310,budgetActual:318},
-{id:"lakeview",name:"Lakeview Villas",city:"Faridabad",type:"Villas",valueCr:24,progress:82,planned:80,budgetPlan:160,budgetActual:151}
-];
-function health(p:Project){const gap=p.planned-p.progress,b=p.budgetActual-p.budgetPlan;if(gap>=8||(p.budgetPlan>0&&b/p.budgetPlan>=.08))return{label:"Critical",tone:"red"};if(gap>=3||b>0)return{label:"Watch",tone:"amber"};return{label:"Healthy",tone:"green"}}
+import { useMemo, useState } from "react";
+import * as XLSX from "xlsx";
+import {
+  UploadCloud, TriangleAlert, CheckCircle2, Sparkles, FileSpreadsheet,
+  CircleDollarSign, PackageSearch, Clock3, Building2
+} from "lucide-react";
+
+type Risk = { severity:"critical"|"warning"|"good"; title:string; detail:string; };
+type MaterialRisk = { item:string; required:number; inventory:number; ordered:number; shortfall:number; };
+type Vendor = { vendor:string; rate:number; delivery:number; payment:string; score:number; };
+type Analysis = {
+  projectName:string;
+  risks:Risk[];
+  materials:MaterialRisk[];
+  vendors:Vendor[];
+  budgetRows:any[];
+  scheduleRows:any[];
+  summary:{critical:number; warning:number; savings:number;};
+};
+
+function rowsFromSheet(wb:XLSX.WorkBook, name:string){
+  const target = wb.SheetNames.find(n => n.trim().toLowerCase() === name.toLowerCase());
+  if(!target) return [];
+  const ws = wb.Sheets[target];
+  return XLSX.utils.sheet_to_json<any[]>(ws,{header:1,defval:""});
+}
+
+function tableFromRows(rows:any[][]){
+  const headerIndex = rows.findIndex(r => r.filter(Boolean).length >= 3);
+  if(headerIndex < 0) return [];
+  const headers = rows[headerIndex].map((h:any)=>String(h).trim().toLowerCase());
+  return rows.slice(headerIndex+1).filter(r=>r.some(Boolean)).map(r=>{
+    const obj:any={};
+    headers.forEach((h:string,i:number)=>obj[h]=r[i]);
+    return obj;
+  });
+}
+
+function num(v:any){ const n=Number(String(v??"").replace(/[₹,%\s,]/g,"")); return Number.isFinite(n)?n:0; }
+
+function analyzeWorkbook(wb:XLSX.WorkBook):Analysis{
+  const boq = tableFromRows(rowsFromSheet(wb,"BOQ"));
+  const inv = tableFromRows(rowsFromSheet(wb,"Inventory"));
+  const po = tableFromRows(rowsFromSheet(wb,"Purchase Orders"));
+  const sched = tableFromRows(rowsFromSheet(wb,"Schedule"));
+  const budget = tableFromRows(rowsFromSheet(wb,"Budget"));
+  const quotes = tableFromRows(rowsFromSheet(wb,"Vendor Quotes"));
+
+  const risks:Risk[]=[];
+  const materials:MaterialRisk[]=[];
+
+  for(const b of boq){
+    const item = String(b["item"]||"").trim();
+    if(!item) continue;
+    const required = num(b["quantity"]);
+    const inventoryRow = inv.find((x:any)=>String(x["item"]||"").trim().toLowerCase()===item.toLowerCase());
+    const inventory = inventoryRow ? num(inventoryRow["available qty"]) : 0;
+    const ordered = po.filter((x:any)=>String(x["item"]||"").trim().toLowerCase()===item.toLowerCase())
+      .reduce((s:number,x:any)=>s+num(x["ordered qty"]),0);
+    const shortfall = Math.max(0,required-inventory-ordered);
+    if(shortfall>0){
+      materials.push({item,required,inventory,ordered,shortfall});
+      const ratio = required?shortfall/required:0;
+      risks.push({
+        severity: ratio>=.25 ? "critical":"warning",
+        title:`${shortfall} ${String(b["unit"]||"units")} of ${item} are still uncovered`,
+        detail:`Required ${required}; inventory ${inventory}; ordered ${ordered}.`
+      });
+    }
+  }
+
+  for(const s of sched){
+    const activity=String(s["activity"]||"").trim();
+    const planned=num(s["planned progress %"]);
+    const actual=num(s["actual progress %"]);
+    const gap=planned-actual;
+    if(activity && gap>0){
+      risks.push({
+        severity: gap>=8?"critical":"warning",
+        title:`${activity} is ${gap}% behind plan`,
+        detail:`Actual progress ${actual}% vs ${planned}% planned.`
+      });
+    }
+  }
+
+  for(const b of budget){
+    const pkg=String(b["package"]||"").trim();
+    const planned=num(b["planned cost (₹)"]);
+    const actual=num(b["actual / projected (₹)"]);
+    const variance=actual-planned;
+    if(pkg && variance>0){
+      const pct=planned?variance/planned*100:0;
+      risks.push({
+        severity:pct>=8?"critical":"warning",
+        title:`${pkg} is ${pct.toFixed(1)}% above budget`,
+        detail:`₹${variance.toLocaleString("en-IN")} above the current plan.`
+      });
+    }
+  }
+
+  const qrows = quotes.map((q:any)=>({
+    vendor:String(q["vendor"]||""),
+    rate:num(q["unit rate (₹/mt)"]),
+    delivery:num(q["delivery days"]),
+    payment:String(q["payment terms"]||"")
+  })).filter((q:any)=>q.vendor && q.rate>0);
+
+  const vendors:Vendor[] = qrows.map((q:any)=>{
+    const minRate=Math.min(...qrows.map((x:any)=>x.rate));
+    const maxDelivery=Math.max(...qrows.map((x:any)=>x.delivery),1);
+    const priceScore=(minRate/q.rate)*100;
+    const deliveryScore=Math.max(0,100-(q.delivery/maxDelivery)*60);
+    const pay=q.payment.toLowerCase();
+    const paymentScore=pay.includes("30 days")?100:pay.includes("advance")?50:70;
+    return {...q,score:Math.round(priceScore*.5+deliveryScore*.35+paymentScore*.15)}
+  }).sort((a,b)=>b.score-a.score);
+
+  let savings=0;
+  if(vendors.length>1){
+    const highest=Math.max(...vendors.map(v=>v.rate));
+    const best=vendors[0];
+    const steel=materials.find(m=>m.item.toLowerCase().includes("steel"));
+    if(steel) savings=Math.max(0,(highest-best.rate)*steel.shortfall);
+  }
+
+  if(!risks.length){
+    risks.push({severity:"good",title:"No major exception detected",detail:"Current workbook data does not show a major schedule, budget or material gap."});
+  }
+
+  return {
+    projectName:"Uploaded Project",
+    risks,
+    materials,
+    vendors,
+    budgetRows:budget,
+    scheduleRows:sched,
+    summary:{
+      critical:risks.filter(r=>r.severity==="critical").length,
+      warning:risks.filter(r=>r.severity==="warning").length,
+      savings
+    }
+  };
+}
+
 export default function Home(){
-const[projects,setProjects]=useState<Project[]>([]),[loaded,setLoaded]=useState(false),[selected,setSelected]=useState<Project|null>(null),[showNew,setShowNew]=useState(false),[showUpload,setShowUpload]=useState(false),[q,setQ]=useState(""),[answer,setAnswer]=useState("Ask what needs your attention today.");
-useEffect(()=>{const s=localStorage.getItem("buildguard-projects");setProjects(s?JSON.parse(s):starter);setLoaded(true)},[]);
-useEffect(()=>{if(loaded)localStorage.setItem("buildguard-projects",JSON.stringify(projects))},[projects,loaded]);
-const total=useMemo(()=>projects.reduce((s,p)=>s+p.valueCr,0),[projects]),issues=useMemo(()=>projects.filter(p=>health(p).label!=="Healthy").length,[projects]);
-function resetDemo(){setProjects(starter);setSelected(null);localStorage.removeItem("buildguard-documents")}
-function ask(){const p=selected||projects[0];if(!p)return;const x=q.toLowerCase(),gap=p.planned-p.progress,b=p.budgetActual-p.budgetPlan;if(x.includes("budget")||x.includes("cost"))setAnswer(b>0?`${p.name} is ₹${b.toFixed(1)}L above the current control budget.`:`${p.name} is currently within the control budget.`);else if(x.includes("delay")||x.includes("risk")||x.includes("late"))setAnswer(gap>0?`${p.name} is ${gap}% behind planned progress and should be reviewed for blocked activities and pending procurement.`:`${p.name} is currently on or ahead of plan.`);else setAnswer(`${p.name}: actual progress ${p.progress}% vs ${p.planned}% planned. ${b>0?`Budget variance is +₹${b.toFixed(1)}L.`:"No current budget overrun detected."}`);setQ("")}
-if(!loaded)return <div className="loading">BuildGuard AI</div>;
-return <div className="shell"><aside className="sidebar"><div className="brand"><div>BG</div><span>BuildGuard AI</span></div><nav><b>Overview</b><span>Projects</span><span>Procurement</span><span>Budget</span><span>Risk center</span><span>Documents</span><span>AI analyst</span></nav><div className="sidebarBottom"><small>Public demo mode</small><button onClick={resetDemo}><RotateCcw size={15}/> Reset demo</button></div></aside>
-<main className="main"><header className="top"><div><span className="eyebrow">EXECUTIVE CONTROL ROOM</span><h1>Portfolio overview</h1><p>See where projects may lose time or money before the problem becomes expensive.</p></div><div className="actions"><button className="secondary" onClick={()=>setShowUpload(true)}><UploadCloud size={16}/> Upload document</button><button className="primary" onClick={()=>setShowNew(true)}><Plus size={16}/> New project</button></div></header>
-<div className="demoBanner"><Sparkles size={16}/><div><b>Client demo mode</b><span>No login required. Changes are saved only in this browser.</span></div></div>
-<section className="metrics"><div><span>Active projects</span><strong>{projects.length}</strong><small>Current browser workspace</small></div><div><span>Total project value</span><strong>₹{total} Cr</strong><small>Portfolio value</small></div><div><span>Projects needing attention</span><strong>{issues}</strong><small>Schedule or budget exceptions</small></div><div><span>Demo workspace</span><strong>Live</strong><small>No account required</small></div></section>
-<section className="grid"><div><div className="panel heroRisk"><span className="riskBadge"><TriangleAlert size={14}/> Critical procurement risk</span><h2>40 MT steel shortfall may delay Tower B structural work</h2><p>110 MT is required. Inventory covers 32 MT and purchase orders cover 38 MT. The remaining 40 MT is still uncovered.</p><div className="riskStats"><div><span>Required by</span><b>24 Sep</b></div><div><span>Lead time</span><b>6–16 days</b></div><div><span>Potential impact</span><b>High</b></div></div></div>
-<div className="panel"><div className="panelHead"><div><h2>Projects</h2><p>Actual progress against current plan</p></div></div><div className="table"><div className="tr th"><span>Project</span><span>Progress</span><span>Schedule</span><span>Value</span><span>Health</span></div>{projects.map(p=>{const h=health(p),gap=p.planned-p.progress;return <button className="tr projectRow" key={p.id} onClick={()=>setSelected(p)}><span><b>{p.name}</b><small>{p.city}</small></span><span><div className="barLabel"><small>{p.progress}%</small><small>Plan {p.planned}%</small></div><div className="bar"><i style={{width:`${Math.min(100,p.progress)}%`}}/></div></span><span className={gap>0?"danger":"good"}>{gap>0?`${gap}% behind`:"On track"}</span><span>₹{p.valueCr} Cr</span><span><em className={`pill ${h.tone}`}>{h.label}</em></span></button>})}</div></div>
-<div className="panel"><div className="panelHead"><div><h2>Steel vendor decision</h2><p>Price + delivery + payment terms</p></div><span className="pill green">Recommended</span></div><div className="vendors"><div className="vrow vh"><span>Vendor</span><span>Rate</span><span>Delivery</span><span>Payment</span><span>AI score</span></div><div className="vrow recommended"><span><b>BuildRight Metals</b><small>Recommended</small></span><span>₹59,800/MT</span><span>9 days</span><span>30 days credit</span><span><b>94/100</b></span></div><div className="vrow"><span><b>Shree Steel</b></span><span>₹61,500/MT</span><span>6 days</span><span>30 days credit</span><span><b>86/100</b></span></div><div className="vrow"><span><b>Metro Metals</b></span><span>₹57,900/MT</span><span>16 days</span><span>50% advance</span><span><b>68/100</b></span></div></div></div></div>
-<aside><div className="aiCard"><div className="aiTitle"><Sparkles size={18}/><h3>AI Project Analyst</h3></div><p>{answer}</p><div className="chips"><button onClick={()=>setQ("What is the biggest delay risk?")}>Delay risk?</button><button onClick={()=>setQ("Where are we over budget?")}>Budget issue?</button></div><div className="ask"><input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&ask()} placeholder="Ask about a project..."/><button onClick={ask}>↗</button></div></div><div className="panel"><h3>Selected project</h3>{selected?<div className="selected"><div className="selectedIcon"><Building2/></div><h2>{selected.name}</h2><p>{selected.city} · {selected.type}</p><div className="selectedStats"><div><span>Actual</span><b>{selected.progress}%</b></div><div><span>Planned</span><b>{selected.planned}%</b></div><div><span>Value</span><b>₹{selected.valueCr} Cr</b></div></div></div>:<p className="muted">Select a project from the table.</p>}</div><div className="panel"><h3>Today's priorities</h3><div className="priorities"><div><i>1</i><span><b>Steel purchase decision</b><small>40 MT remains uncovered.</small></span></div><div><i>2</i><span><b>Electrical RFQ pending</b><small>Three quotations are ready.</small></span></div><div><i>3</i><span><b>Budget variance</b><small>Electrical package is above plan.</small></span></div></div></div></aside></section></main>
-{showNew&&<NewProjectModal onClose={()=>setShowNew(false)} onCreate={p=>{setProjects([p,...projects]);setShowNew(false)}}/>}{showUpload&&<UploadModal onClose={()=>setShowUpload(false)}/>}</div>}
-function NewProjectModal({onClose,onCreate}:{onClose:()=>void;onCreate:(p:Project)=>void}){const[f,setF]=useState({name:"",city:"",type:"Residential",valueCr:"",progress:"0",planned:"0",budgetPlan:"0",budgetActual:"0"});function create(){onCreate({id:Date.now().toString(),name:f.name,city:f.city,type:f.type,valueCr:Number(f.valueCr||0),progress:Number(f.progress||0),planned:Number(f.planned||0),budgetPlan:Number(f.budgetPlan||0),budgetActual:Number(f.budgetActual||0)})}return <div className="modalBg"><div className="modal"><div className="modalTop"><div><span className="eyebrow">DEMO WORKSPACE</span><h2>Create project</h2></div><button onClick={onClose}>×</button></div><div className="formGrid"><label className="full">Project name<input value={f.name} onChange={e=>setF({...f,name:e.target.value})}/></label><label>City<input value={f.city} onChange={e=>setF({...f,city:e.target.value})}/></label><label>Type<select value={f.type} onChange={e=>setF({...f,type:e.target.value})}><option>Residential</option><option>Commercial</option><option>Mixed-use</option><option>Villas</option></select></label><label>Project value (₹ Cr)<input type="number" value={f.valueCr} onChange={e=>setF({...f,valueCr:e.target.value})}/></label><label>Actual progress %<input type="number" value={f.progress} onChange={e=>setF({...f,progress:e.target.value})}/></label><label>Planned progress %<input type="number" value={f.planned} onChange={e=>setF({...f,planned:e.target.value})}/></label><label>Budget planned (₹ L)<input type="number" value={f.budgetPlan} onChange={e=>setF({...f,budgetPlan:e.target.value})}/></label><label>Budget actual (₹ L)<input type="number" value={f.budgetActual} onChange={e=>setF({...f,budgetActual:e.target.value})}/></label></div><button className="saveBtn" onClick={create} disabled={!f.name}>Create project</button></div></div>}
-function UploadModal({onClose}:{onClose:()=>void}){const[file,setFile]=useState<File|null>(null),[category,setCategory]=useState("BOQ"),[saved,setSaved]=useState(false);function save(){if(!file)return;const docs=JSON.parse(localStorage.getItem("buildguard-documents")||"[]");docs.unshift({name:file.name,category,size:file.size,createdAt:new Date().toISOString()});localStorage.setItem("buildguard-documents",JSON.stringify(docs));setSaved(true)}return <div className="modalBg"><div className="modal"><div className="modalTop"><div><span className="eyebrow">DEMO DOCUMENTS</span><h2>Upload document</h2></div><button onClick={onClose}>×</button></div><label>Document type<select value={category} onChange={e=>setCategory(e.target.value)}><option>BOQ</option><option>Schedule</option><option>Budget</option><option>Vendor Quote</option><option>Purchase Order</option><option>Invoice</option><option>Progress Report</option></select></label><label className="fileDrop"><UploadCloud/><b>{file?file.name:"Choose a project file"}</b><span>This public demo stores only file metadata in your browser.</span><input type="file" onChange={e=>setFile(e.target.files?.[0]||null)}/></label>{saved&&<div className="success"><CheckCircle2 size={16}/> Demo upload saved in this browser.</div>}<button className="saveBtn" onClick={save} disabled={!file}>Save demo upload</button></div></div>}
+  const [analysis,setAnalysis]=useState<Analysis|null>(null);
+  const [fileName,setFileName]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [question,setQuestion]=useState("");
+  const [answer,setAnswer]=useState("Upload a project Excel workbook to start.");
+
+  async function handleFile(file:File){
+    setBusy(true);
+    const buf=await file.arrayBuffer();
+    const wb=XLSX.read(buf,{type:"array",cellDates:true});
+    const result=analyzeWorkbook(wb);
+    setAnalysis(result);
+    setFileName(file.name);
+    setAnswer(`I analyzed ${file.name}. I found ${result.summary.critical} critical and ${result.summary.warning} warning-level issues.`);
+    setBusy(false);
+  }
+
+  function ask(){
+    if(!analysis || !question.trim()) return;
+    const q=question.toLowerCase();
+    const critical=analysis.risks.filter(r=>r.severity==="critical");
+    if(q.includes("biggest")||q.includes("risk")||q.includes("delay")){
+      const r=critical[0]||analysis.risks[0];
+      setAnswer(`${r.title}. ${r.detail}`);
+    }else if(q.includes("vendor")||q.includes("steel")){
+      const v=analysis.vendors[0];
+      setAnswer(v?`${v.vendor} currently ranks highest at ${v.score}/100, with ₹${v.rate.toLocaleString("en-IN")}/MT and ${v.delivery}-day delivery.`:"No vendor quote data was found.");
+    }else if(q.includes("budget")||q.includes("cost")){
+      const r=analysis.risks.find(r=>r.title.toLowerCase().includes("budget"));
+      setAnswer(r?`${r.title}. ${r.detail}`:"No budget overrun was detected.");
+    }else{
+      setAnswer(`I found ${analysis.summary.critical} critical issues and ${analysis.summary.warning} warnings. Ask about risk, budget, steel, or vendor choice.`);
+    }
+    setQuestion("");
+  }
+
+  return <div className="shell">
+    <aside className="sidebar">
+      <div className="brand"><div>BG</div><span>BuildGuard AI</span></div>
+      <nav><b>Overview</b><span>Projects</span><span>Procurement</span><span>Budget</span><span>Risk center</span><span>Documents</span><span>AI analyst</span></nav>
+      <div className="sideNote"><small>V4 intelligence engine</small><span>Excel → risks → decisions</span></div>
+    </aside>
+
+    <main className="main">
+      <header className="top">
+        <div><span className="eyebrow">REAL EXCEL ANALYSIS</span><h1>Project Control Room</h1><p>Upload one workbook and BuildGuard will connect the sheets automatically.</p></div>
+        <label className="uploadBtn"><UploadCloud size={17}/>{busy?"Analyzing...":"Upload Excel"}<input type="file" accept=".xlsx,.xls" hidden onChange={e=>e.target.files?.[0]&&handleFile(e.target.files[0])}/></label>
+      </header>
+
+      {!analysis ? <section className="empty">
+        <div className="emptyIcon"><FileSpreadsheet/></div>
+        <h2>Upload the Horizon Heights test workbook</h2>
+        <p>BuildGuard will read BOQ, Inventory, Purchase Orders, Schedule, Budget and Vendor Quotes.</p>
+        <label className="primaryUpload"><UploadCloud/> Choose Excel file<input type="file" accept=".xlsx,.xls" hidden onChange={e=>e.target.files?.[0]&&handleFile(e.target.files[0])}/></label>
+      </section> :
+      <>
+        <div className="fileBanner"><CheckCircle2/><div><b>{fileName}</b><span>Workbook analyzed successfully</span></div></div>
+
+        <section className="metrics">
+          <div><span>Critical issues</span><strong>{analysis.summary.critical}</strong><small>Needs management attention</small></div>
+          <div><span>Warnings</span><strong>{analysis.summary.warning}</strong><small>Review soon</small></div>
+          <div><span>Material gaps</span><strong>{analysis.materials.length}</strong><small>BOQ vs inventory + PO</small></div>
+          <div><span>Potential quote saving</span><strong>₹{Math.round(analysis.summary.savings).toLocaleString("en-IN")}</strong><small>On uncovered steel quantity</small></div>
+        </section>
+
+        <section className="grid">
+          <div>
+            <div className="panel">
+              <div className="panelHead"><div><h2>Detected project risks</h2><p>Generated from the uploaded workbook</p></div></div>
+              <div className="riskList">
+                {analysis.risks.map((r,i)=><div className="riskItem" key={i}>
+                  <div className={`riskIcon ${r.severity}`}>{r.severity==="good"?<CheckCircle2/>:<TriangleAlert/>}</div>
+                  <div><b>{r.title}</b><span>{r.detail}</span></div>
+                </div>)}
+              </div>
+            </div>
+
+            <div className="panel">
+              <div className="panelHead"><div><h2>Material coverage</h2><p>BOQ requirement vs inventory and purchase orders</p></div></div>
+              <div className="table">
+                <div className="tr th"><span>Material</span><span>Required</span><span>Inventory</span><span>Ordered</span><span>Shortfall</span></div>
+                {analysis.materials.map((m,i)=><div className="tr" key={i}><span><b>{m.item}</b></span><span>{m.required}</span><span>{m.inventory}</span><span>{m.ordered}</span><span className="danger"><b>{m.shortfall}</b></span></div>)}
+              </div>
+            </div>
+
+            <div className="panel">
+              <div className="panelHead"><div><h2>Vendor intelligence</h2><p>Rate + delivery + payment terms</p></div></div>
+              <div className="table">
+                <div className="tr vendors th"><span>Vendor</span><span>Rate</span><span>Delivery</span><span>Payment</span><span>Score</span></div>
+                {analysis.vendors.map((v,i)=><div className={`tr vendors ${i===0?"recommended":""}`} key={v.vendor}>
+                  <span><b>{v.vendor}</b>{i===0&&<small>Recommended</small>}</span>
+                  <span>₹{v.rate.toLocaleString("en-IN")}/MT</span><span>{v.delivery} days</span><span>{v.payment}</span><span><b>{v.score}/100</b></span>
+                </div>)}
+              </div>
+            </div>
+          </div>
+
+          <aside>
+            <div className="aiCard">
+              <div className="aiTitle"><Sparkles/><h3>Project Analyst</h3></div>
+              <p>{answer}</p>
+              <div className="chips">
+                <button onClick={()=>setQuestion("What is the biggest risk?")}>Biggest risk?</button>
+                <button onClick={()=>setQuestion("Which steel vendor is best?")}>Best vendor?</button>
+                <button onClick={()=>setQuestion("Where are we over budget?")}>Budget?</button>
+              </div>
+              <div className="ask"><input value={question} onChange={e=>setQuestion(e.target.value)} onKeyDown={e=>e.key==="Enter"&&ask()} placeholder="Ask about uploaded data..."/><button onClick={ask}>↗</button></div>
+            </div>
+
+            <div className="panel">
+              <h3>What V4 is doing</h3>
+              <div className="logic">
+                <div><PackageSearch/><span><b>Material coverage</b><small>BOQ − inventory − POs</small></span></div>
+                <div><Clock3/><span><b>Schedule variance</b><small>Planned % − actual %</small></span></div>
+                <div><CircleDollarSign/><span><b>Budget variance</b><small>Actual/projected − plan</small></span></div>
+                <div><Building2/><span><b>Vendor ranking</b><small>Price + lead time + terms</small></span></div>
+              </div>
+            </div>
+          </aside>
+        </section>
+      </>}
+    </main>
+  </div>
+}
